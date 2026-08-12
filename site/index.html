@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raft Chaos Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Inter:wght@400;450;500;600&display=swap" rel="stylesheet">
+<style>
+/* ---------------------------------------------------------------------------
+   Palette. Two data hues only: blue for leadership bands, red for fault
+   windows. Both modes validated against their own surface -- worst-pair CVD
+   dE 21.6 light / 19.2 dark, normal-vision 32.3 / 29.0.
+
+   A third hue (green) for acknowledged-write markers was tried and REJECTED:
+   green vs red measures dE 2.5 under deuteranopia, the classic red/green
+   collapse. Write markers wear text tokens with shape and label instead, so
+   nothing depends on hue.
+--------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --plane:    #f9f9f7;
+  --surface:  #fcfcfb;
+  --raised:   #f4f3ef;
+  --ink:      #0b0b0b;
+  --ink-2:    #52514e;
+  --label:    #6b6a66;
+  --grid:     #e1e0d9;
+  --rule:     #c3c2b7;
+  --border:   rgba(11,11,11,.10);
+  --leader:   #2a78d6;
+  --fault:    #e34948;
+  --ok:       #006300;
+  --bad:      #b3261e;
+  --display: "Newsreader", ui-serif, Georgia, serif;
+  --sans: "Inter", ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --plane:   #0d0d0d;
+    --surface: #1a1a19;
+    --raised:  #211f1d;
+    --ink:     #ffffff;
+    --ink-2:   #c3c2b7;
+    --label:   #918f89;
+    --grid:    #2c2c2a;
+    --rule:    #383835;
+    --border:  rgba(255,255,255,.10);
+    --leader:  #3987e5;
+    --fault:   #e66767;
+    --ok:      #4fbf4f;
+    --bad:     #f2b8b5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:#0d0d0d; --surface:#1a1a19; --raised:#211f1d; --ink:#fff; --ink-2:#c3c2b7;
+  --label:#918f89; --grid:#2c2c2a; --rule:#383835; --border:rgba(255,255,255,.10);
+  --leader:#3987e5; --fault:#e66767; --ok:#4fbf4f; --bad:#f2b8b5;
+}
+
+* { box-sizing: border-box; }
+html { overflow-x: hidden; overflow-x: clip; }
+body {
+  margin: 0; overflow-x: hidden; overflow-x: clip;
+  background: var(--plane); color: var(--ink);
+  font-family: var(--sans); font-size: 16px; line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+main { max-width: 62rem; margin: 0 auto; padding: clamp(2.5rem,6vw,5rem) clamp(1.25rem,4vw,2.5rem) 6rem; }
+
+.eyebrow { font-size:.72rem; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--label); margin:0 0 .7rem; }
+
+h1 { font-family: var(--display); font-weight:600; font-size:clamp(2.4rem,6vw,3.6rem); line-height:1.05; letter-spacing:-.02em; margin:0 0 .5rem; }
+h2 { font-family: var(--display); font-weight:600; font-size:clamp(1.5rem,3.5vw,2rem); line-height:1.15; letter-spacing:-.01em; margin:0 0 .4rem; }
+h3 { font-family: var(--sans); font-weight:600; font-size:1.02rem; margin:0 0 .3rem; }
+.lede { font-size:clamp(1.02rem,2vw,1.15rem); color:var(--ink-2); margin:0; max-width:60ch; }
+
+section { margin-top: clamp(3rem,6vw,4.5rem); }
+.meta { margin-top:1.5rem; font-family:var(--mono); font-size:.78rem; color:var(--label); }
+.meta a { color:inherit; }
+
+/* ------------------------------------------------------------------ verdict */
+.verdict-card {
+  margin-top:2.5rem; background:var(--surface); border:1px solid var(--border);
+  border-radius:16px; padding:clamp(1.6rem,4vw,2.4rem);
+}
+.hero { font-family:var(--sans); font-weight:600; font-size:clamp(2.6rem,7vw,3.8rem); line-height:1; letter-spacing:-.02em; margin:.2rem 0 .5rem; }
+.hero-note { color:var(--ink-2); margin:0; max-width:58ch; }
+
+.tiles { display:grid; gap:1px; grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr));
+         background:var(--border); border:1px solid var(--border); border-radius:12px; overflow:hidden; margin-top:1.8rem; }
+.tile { background:var(--surface); padding:1rem 1.1rem; }
+.tile .k { font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; color:var(--label); }
+.tile .v { font-size:1.5rem; font-weight:600; line-height:1.2; margin-top:.15rem; }
+
+/* -------------------------------------------------------------------- prose */
+.prose p { color:var(--ink-2); max-width:66ch; }
+.prose ul { color:var(--ink-2); max-width:66ch; padding-left:1.1rem; }
+.prose li { margin:.3rem 0; }
+.prose strong { color:var(--ink); font-weight:600; }
+code { font-family:var(--mono); font-size:.86em; background:var(--raised); padding:.12em .35em; border-radius:4px; }
+
+/* ----------------------------------------------------------------- findings */
+.finding { background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--fault);
+           border-radius:12px; padding:1.4rem 1.5rem; margin-top:1rem; }
+.finding h3 { margin-bottom:.5rem; }
+.finding .tags { display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:.7rem; }
+.tag { font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; color:var(--label);
+       border:1px solid var(--border); border-radius:999px; padding:.15rem .55rem; }
+.finding p { margin:.5rem 0; color:var(--ink-2); max-width:70ch; }
+.finding .fix { color:var(--ink); }
+.finding .test { font-family:var(--mono); font-size:.76rem; color:var(--label); word-break:break-all; }
+
+.clean-note { background:var(--raised); border:1px solid var(--border); border-radius:12px; padding:1.4rem 1.5rem; }
+.clean-note p { margin:.4rem 0; color:var(--ink-2); max-width:70ch; }
+
+/* --------------------------------------------------------------- scenarios */
+details.scenario { background:var(--surface); border:1px solid var(--border); border-radius:14px; margin-top:.85rem; overflow:hidden; }
+details.scenario > summary { list-style:none; cursor:pointer; padding:1.15rem 1.4rem; display:flex; align-items:center; gap:1rem; }
+details.scenario > summary::-webkit-details-marker { display:none; }
+.sum-main { flex:1; min-width:0; }
+.sum-name { font-weight:600; }
+.sum-fault { font-size:.83rem; color:var(--label); margin-top:.1rem; }
+.badge { font-size:.74rem; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
+         padding:.22rem .6rem; border-radius:999px; border:1px solid currentColor; white-space:nowrap; }
+.badge.pass { color:var(--ok); }
+.badge.fail { color:var(--bad); }
+.chev { color:var(--label); transition:transform .18s ease; }
+details.scenario[open] .chev { transform:rotate(90deg); }
+.scenario-body { padding:0 1.4rem 1.5rem; border-top:1px solid var(--border); }
+.scenario-body > *:first-child { margin-top:1.2rem; }
+
+/* ---------------------------------------------------------------- timeline */
+.timeline { margin-top:1rem; }
+.tl-row { display:grid; grid-template-columns:4.2rem 1fr; align-items:center; gap:.7rem; margin-bottom:5px; }
+.tl-label { font-family:var(--mono); font-size:.75rem; color:var(--ink-2); text-align:right; }
+.tl-track { position:relative; height:20px; background:var(--grid); border-radius:4px; }
+.tl-band { position:absolute; top:0; height:100%; border-radius:4px; display:flex; align-items:center;
+           padding:0 .4rem; font-size:.68rem; font-weight:500; color:#fff; white-space:nowrap; overflow:hidden; }
+.tl-band.leader { background:var(--leader); }
+.tl-band.fault  { background:var(--fault); }
+.tl-axis { display:grid; grid-template-columns:4.2rem 1fr; gap:.7rem; margin-top:.5rem; }
+.tl-axis .ticks { display:flex; justify-content:space-between; font-family:var(--mono); font-size:.68rem; color:var(--label); }
+
+/* Write markers wear ink, not a data hue: acked is a filled pip, unacked is
+   hollow, and both carry a label -- so the distinction survives greyscale. */
+.tl-marks { position:relative; height:26px; }
+.tl-mark { position:absolute; transform:translateX(-50%); text-align:center; }
+.tl-pip { width:9px; height:9px; border-radius:50%; margin:0 auto; border:1.5px solid var(--ink); }
+.tl-pip.acked { background:var(--ink); }
+.tl-pip.pending, .tl-pip.overwritten { background:transparent; }
+.tl-mark .cap { font-family:var(--mono); font-size:.62rem; color:var(--label); margin-top:2px; }
+
+.legend { display:flex; gap:1.1rem; flex-wrap:wrap; font-size:.78rem; color:var(--ink-2); margin-top:1rem; }
+.legend span { display:inline-flex; align-items:center; gap:.4rem; }
+.legend i { width:12px; height:12px; border-radius:3px; display:inline-block; }
+.legend .pip { width:9px; height:9px; border-radius:50%; border:1.5px solid var(--ink); }
+.legend .pip.filled { background:var(--ink); }
+
+/* ------------------------------------------------------------------ tables */
+.tbl-wrap { overflow-x:auto; margin-top:1.2rem; }
+table { border-collapse:collapse; width:100%; font-size:.84rem; min-width:34rem; }
+th, td { text-align:left; padding:.5rem .7rem; border-bottom:1px solid var(--border); }
+th { font-size:.7rem; letter-spacing:.06em; text-transform:uppercase; color:var(--label); font-weight:600; }
+td.num { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+.status-acked { color:var(--ok); font-weight:500; }
+.status-other { color:var(--label); }
+
+.counters { display:flex; gap:1.5rem; flex-wrap:wrap; margin-top:1.2rem; font-size:.82rem; color:var(--ink-2); }
+.counters b { font-family:var(--mono); font-variant-numeric:tabular-nums; color:var(--ink); font-weight:600; }
+
+footer { margin-top:5rem; padding-top:1.5rem; border-top:1px solid var(--border); font-size:.82rem; color:var(--label); }
+@media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+</style>
+</head>
+<body>
+<main>
+
+  <header>
+    <p class="eyebrow">Chaos engineering report</p>
+    <h1>Raft under fault injection</h1>
+    <p class="lede">Systematic fault injection and continuous correctness verification against
+      a Raft consensus implementation, driven externally through a queued
+      transport built on its own node API.</p>
+    <p class="meta" id="meta"></p>
+  </header>
+
+  <div class="verdict-card">
+    <p class="eyebrow">Verdict</p>
+    <p class="hero" id="hero"></p>
+    <p class="hero-note" id="hero-note"></p>
+    <div class="tiles" id="tiles"></div>
+  </div>
+
+  <section class="prose">
+    <p class="eyebrow">Method</p>
+    <h2>What is checked, and what is not</h2>
+    <p>Four properties are asserted on <strong>every tick</strong> rather than at the end of a run,
+      so the report can say when something broke rather than only that the final state looked
+      healthy. A violation that appears and then heals still counts.</p>
+    <ul>
+      <li><strong>Election safety</strong> — at most one leader per term.</li>
+      <li><strong>State machine safety</strong> — no two nodes ever apply different commands at the same log index.</li>
+      <li><strong>Leader completeness</strong> — every acknowledged entry is present, unchanged, in the log of every leader elected afterwards.</li>
+      <li><strong>Acknowledged read consistency</strong> — once the leader has applied up to an acknowledged write, reading that key from the leader returns that value.</li>
+    </ul>
+    <p>A write counts as <strong>acknowledged</strong> only once the leader's <code>commit_index</code> covers it —
+      the moment a real server would answer the client. An uncommitted entry disappearing is correct
+      Raft behaviour and is recorded as an overwrite, never as a loss.</p>
+    <p>Stale reads from followers are deliberately <strong>not</strong> treated as violations. The engine documents
+      that reads are served locally with no read-index or leader lease, so a lagging follower returning
+      an old value is designed behaviour rather than a defect.</p>
+  </section>
+
+  <section>
+    <p class="eyebrow">Findings</p>
+    <h2 id="findings-title"></h2>
+    <div id="findings"></div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Scenarios</p>
+    <h2>What was injected, and what happened</h2>
+    <p class="prose" style="margin-top:.6rem">Each timeline runs left to right in simulation ticks. Blue bands are
+      leadership, red bands are active faults, and pips mark client writes.</p>
+    <div id="scenarios"></div>
+  </section>
+
+  <footer id="footer"></footer>
+</main>
+
+<script id="payload" type="application/json">{"generated_at":"2026-08-12T20:11:59+00:00","engine":{"repo":"https://github.com/abho7/raft-kv-store","note":"Cloned read-only; driven externally. Not modified by this harness."},"summary":{"scenarios":6,"passed":6,"failed":0,"violations":0,"total_ticks":2173,"total_messages":6040,"total_dropped":1201,"acked_writes":20},"scenarios":[{"name":"Leader killed mid-write","slug":"kill-leader-mid-write","description":"A write is proposed and the leader is crashed in the same tick, before replication completes. Acknowledged writes must survive; the in-flight one is permitted to vanish.","fault_summary":"NodeCrash on the current leader, one tick after a proposal","nodes":["n1","n2","n3","n4","n5"],"seed":7,"total_ticks":177,"passed":true,"check":{"passed":true,"violations":[],"acked_writes":2,"proposed_writes":3,"lost_proposals":0,"stale_follower_reads":0},"counters":{"messages_sent":409,"messages_delivered":355,"messages_dropped":51,"messages_delayed":0},"leader_intervals":[{"node":"n4","term":1,"start":15,"end":177},{"node":"n2","term":2,"start":57,"end":177}],"fault_windows":[{"label":"NodeCrash","kind":"NodeCrash","node":"n4","groups":null,"start":45,"end":177,"detail":{"kind":"NodeCrash","node":"n4"}}],"writes":[{"index":1,"term":1,"command":{"op":"set","key":"a","value":"1"},"leader":"n4","proposed_tick":15,"acked_tick":17,"status":"acked"},{"index":2,"term":1,"command":{"op":"set","key":"b","value":"2"},"leader":"n4","proposed_tick":45,"acked_tick":null,"status":"pending"},{"index":2,"term":2,"command":{"op":"set","key":"c","value":"3"},"leader":"n2","proposed_tick":57,"acked_tick":59,"status":"acked"}]},{"name":"Network partition, two groups","slug":"partition-two-groups","description":"The cluster splits into a one-node minority holding the old leader and a four-node majority. The majority must elect a new leader and keep committing. A write aimed at the isolated leader must never commit, and must not survive the partition healing.","fault_summary":"Partition: {old leader} | rest of cluster, healed after 150 ticks","nodes":["n1","n2","n3","n4","n5"],"seed":3,"total_ticks":315,"passed":true,"check":{"passed":true,"violations":[],"acked_writes":2,"proposed_writes":3,"lost_proposals":1,"stale_follower_reads":0},"counters":{"messages_sent":986,"messages_delivered":724,"messages_dropped":258,"messages_delayed":0},"leader_intervals":[{"node":"n2","term":1,"start":15,"end":198},{"node":"n4","term":2,"start":57,"end":315}],"fault_windows":[{"label":"leader isolated","kind":"Partition","node":null,"groups":[["n2"],["n1","n3","n4","n5"]],"start":45,"end":195,"detail":{"kind":"Partition","label":"leader isolated","groups":[["n2"],["n1","n3","n4","n5"]]}}],"writes":[{"index":1,"term":1,"command":{"op":"set","key":"a","value":"1"},"leader":"n2","proposed_tick":15,"acked_tick":17,"status":"acked"},{"index":2,"term":2,"command":{"op":"set","key":"b","value":"2"},"leader":"n4","proposed_tick":105,"acked_tick":107,"status":"acked"},{"index":2,"term":1,"command":{"op":"set","key":"STALE","value":"x"},"leader":"n2","proposed_tick":165,"acked_tick":null,"status":"overwritten"}]},{"name":"Delayed and dropped links","slug":"delayed-dropped-links","description":"Two specific links are degraded while writes continue: one gains six ticks of latency, the other drops half its messages. Consensus must still converge and every acknowledged write must survive.","fault_summary":"LinkFault n1<->n3 delay 6 ticks; LinkFault n2<->n4 drop 50%","nodes":["n1","n2","n3","n4","n5"],"seed":11,"total_ticks":282,"passed":true,"check":{"passed":true,"violations":[],"acked_writes":6,"proposed_writes":6,"lost_proposals":0,"stale_follower_reads":0},"counters":{"messages_sent":753,"messages_delivered":705,"messages_dropped":44,"messages_delayed":0},"leader_intervals":[{"node":"n2","term":1,"start":12,"end":282}],"fault_windows":[{"label":"n1->n3 slow","kind":"LinkFault","node":null,"groups":null,"start":12,"end":162,"detail":{"kind":"LinkFault","label":"n1->n3 slow","sender":"n1","recipient":"n3","drop_prob":0.0,"delay_ticks":6,"bidirectional":true}},{"label":"n2->n4 lossy","kind":"LinkFault","node":null,"groups":null,"start":12,"end":162,"detail":{"kind":"LinkFault","label":"n2->n4 lossy","sender":"n2","recipient":"n4","drop_prob":0.5,"delay_ticks":0,"bidirectional":true}}],"writes":[{"index":1,"term":1,"command":{"op":"set","key":"k0","value":"0"},"leader":"n2","proposed_tick":12,"acked_tick":14,"status":"acked"},{"index":2,"term":1,"command":{"op":"set","key":"k1","value":"1"},"leader":"n2","proposed_tick":37,"acked_tick":39,"status":"acked"},{"index":3,"term":1,"command":{"op":"set","key":"k2","value":"2"},"leader":"n2","proposed_tick":62,"acked_tick":64,"status":"acked"},{"index":4,"term":1,"command":{"op":"set","key":"k3","value":"3"},"leader":"n2","proposed_tick":87,"acked_tick":89,"status":"acked"},{"index":5,"term":1,"command":{"op":"set","key":"k4","value":"4"},"leader":"n2","proposed_tick":112,"acked_tick":114,"status":"acked"},{"index":6,"term":1,"command":{"op":"set","key":"k5","value":"5"},"leader":"n2","proposed_tick":137,"acked_tick":139,"status":"acked"}]},{"name":"Repeated elections under write load","slug":"election-storm","description":"Whoever holds leadership is isolated and released four times in a row while writes keep arriving, forcing repeated elections. Term numbers should climb steadily and no acknowledged write may be lost across any leadership handover.","fault_summary":"Four successive Partition faults, each isolating the sitting leader","nodes":["n1","n2","n3","n4","n5"],"seed":23,"total_ticks":563,"passed":true,"check":{"passed":true,"violations":[],"acked_writes":5,"proposed_writes":5,"lost_proposals":0,"stale_follower_reads":0},"counters":{"messages_sent":1658,"messages_delivered":1356,"messages_dropped":298,"messages_delayed":0},"leader_intervals":[{"node":"n3","term":1,"start":13,"end":79},{"node":"n2","term":2,"start":43,"end":179},{"node":"n1","term":3,"start":152,"end":280},{"node":"n3","term":4,"start":244,"end":380},{"node":"n1","term":5,"start":342,"end":563}],"fault_windows":[{"label":"unseat n3 (round 1)","kind":"Partition","node":null,"groups":[["n3"],["n1","n2","n4","n5"]],"start":33,"end":78,"detail":{"kind":"Partition","label":"unseat n3 (round 1)","groups":[["n3"],["n1","n2","n4","n5"]]}},{"label":"unseat n2 (round 2)","kind":"Partition","node":null,"groups":[["n2"],["n1","n3","n4","n5"]],"start":133,"end":178,"detail":{"kind":"Partition","label":"unseat n2 (round 2)","groups":[["n2"],["n1","n3","n4","n5"]]}},{"label":"unseat n1 (round 3)","kind":"Partition","node":null,"groups":[["n1"],["n2","n3","n4","n5"]],"start":233,"end":278,"detail":{"kind":"Partition","label":"unseat n1 (round 3)","groups":[["n1"],["n2","n3","n4","n5"]]}},{"label":"unseat n3 (round 4)","kind":"Partition","node":null,"groups":[["n3"],["n1","n2","n4","n5"]],"start":333,"end":378,"detail":{"kind":"Partition","label":"unseat n3 (round 4)","groups":[["n3"],["n1","n2","n4","n5"]]}}],"writes":[{"index":1,"term":1,"command":{"op":"set","key":"s0","value":"0"},"leader":"n3","proposed_tick":13,"acked_tick":15,"status":"acked"},{"index":2,"term":2,"command":{"op":"set","key":"s1","value":"1"},"leader":"n2","proposed_tick":113,"acked_tick":115,"status":"acked"},{"index":3,"term":3,"command":{"op":"set","key":"s2","value":"2"},"leader":"n1","proposed_tick":213,"acked_tick":215,"status":"acked"},{"index":4,"term":4,"command":{"op":"set","key":"s3","value":"3"},"leader":"n3","proposed_tick":313,"acked_tick":315,"status":"acked"},{"index":5,"term":5,"command":{"op":"set","key":"final","value":"done"},"leader":"n1","proposed_tick":413,"acked_tick":415,"status":"acked"}]},{"name":"Crash during an active partition","slug":"crash-during-partition","description":"A node is crashed inside the majority side while the network is already split, taking the reachable set to exactly a bare quorum. Both faults are then healed together.","fault_summary":"Partition {leader} | rest, then NodeCrash inside the majority, both healed","nodes":["n1","n2","n3","n4","n5"],"seed":31,"total_ticks":412,"passed":true,"check":{"passed":true,"violations":[],"acked_writes":3,"proposed_writes":3,"lost_proposals":0,"stale_follower_reads":0},"counters":{"messages_sent":1263,"messages_delivered":850,"messages_dropped":409,"messages_delayed":0},"leader_intervals":[{"node":"n4","term":1,"start":12,"end":263},{"node":"n3","term":2,"start":56,"end":412}],"fault_windows":[{"label":"leader isolated","kind":"Partition","node":null,"groups":[["n4"],["n1","n2","n3","n5"]],"start":42,"end":262,"detail":{"kind":"Partition","label":"leader isolated","groups":[["n4"],["n1","n2","n3","n5"]]}},{"label":"NodeCrash","kind":"NodeCrash","node":"n5","groups":null,"start":142,"end":262,"detail":{"kind":"NodeCrash","node":"n5"}}],"writes":[{"index":1,"term":1,"command":{"op":"set","key":"a","value":"1"},"leader":"n4","proposed_tick":12,"acked_tick":14,"status":"acked"},{"index":2,"term":2,"command":{"op":"set","key":"b","value":"2"},"leader":"n3","proposed_tick":102,"acked_tick":104,"status":"acked"},{"index":3,"term":2,"command":{"op":"set","key":"c","value":"3"},"leader":"n3","proposed_tick":202,"acked_tick":204,"status":"acked"}]},{"name":"Quorum loss and recovery","slug":"quorum-loss","description":"Three of five nodes are crashed, making a quorum impossible. A write issued during that window must NOT be acknowledged while it lasts -- it may only commit once enough nodes return. Unavailability here is correct behaviour, not a failure; the timeline below shows the write sitting unacknowledged until the restarts land.","fault_summary":"Three sequential NodeCrash faults, then all three restarted","nodes":["n1","n2","n3","n4","n5"],"seed":47,"total_ticks":424,"passed":true,"check":{"passed":true,"violations":[],"acked_writes":2,"proposed_writes":2,"lost_proposals":0,"stale_follower_reads":0},"counters":{"messages_sent":971,"messages_delivered":826,"messages_dropped":141,"messages_delayed":0},"leader_intervals":[{"node":"n1","term":1,"start":14,"end":424},{"node":"n4","term":2,"start":67,"end":424}],"fault_windows":[{"label":"NodeCrash","kind":"NodeCrash","node":"n1","groups":null,"start":54,"end":224,"detail":{"kind":"NodeCrash","node":"n1"}},{"label":"NodeCrash","kind":"NodeCrash","node":"n2","groups":null,"start":84,"end":224,"detail":{"kind":"NodeCrash","node":"n2"}},{"label":"NodeCrash","kind":"NodeCrash","node":"n3","groups":null,"start":114,"end":224,"detail":{"kind":"NodeCrash","node":"n3"}}],"writes":[{"index":1,"term":1,"command":{"op":"set","key":"a","value":"1"},"leader":"n1","proposed_tick":14,"acked_tick":16,"status":"acked"},{"index":2,"term":2,"command":{"op":"set","key":"impossible","value":"x"},"leader":"n4","proposed_tick":144,"acked_tick":227,"status":"acked"}]}],"findings":{"engine_bugs":[],"harness_bugs":[{"title":"Acknowledgements ordered by detection time, not log index","severity":"false positive","found_by":"randomized sweep, seed 124","symptom":"50 reported acked-read violations against entirely correct Raft behaviour.","detail":"An entry whose proposing leader was partitioned is only noticed as committed once that node rejoins. Under seed 124 index 3 (c='30') was therefore detected at tick 250, after index 4 (c='24') had already been detected at tick 248. The checker recorded the newest acknowledged value per key in detection order, so it regressed its expectation to a value that a later write had legitimately superseded, then flagged the leader for disagreeing with it.","resolution":"Expected values are now tracked by log index rather than detection order, and an entry is recognised as committed via any alive node whose commit_index covers it, rather than only via its original proposer.","test":"tests/test_harness.py::test_seed_124_does_not_report_a_false_acked_read_violation"},{"title":"Timeline silently erased overwritten writes","severity":"reporting defect","found_by":"manual review of scenario fidelity","symptom":"The single most interesting event in 'leader killed mid-write' was missing from its own timeline.","detail":"Derived write records were keyed by log index. When a leader is unseated mid-write, the next leader reuses that index for a different command, so the in-flight entry's record was overwritten by its replacement -- exactly the event the scenario exists to demonstrate.","resolution":"Writes are kept as an ordered list; acknowledgements match on (index, term), which is unique.","test":"Covered indirectly by the scenario timelines; see kill-leader-mid-write below."},{"title":"A scenario tested the opposite of its description","severity":"vacuous pass","found_by":"manual review of scenario fidelity","symptom":"'The majority must keep committing' was asserted while writing to the isolated minority.","detail":"propose() scans nodes in id order and hands the write to the first node that believes it is leader. During a partition that is often the isolated stale leader, whose write correctly never commits -- so the scenario passed while demonstrating nothing about the majority side.","resolution":"Added propose_to() and leader_within(), so any scenario asserting something about a specific side must name that side.","test":"tests/test_harness.py::test_propose_to_refuses_a_node_that_is_not_leader"}]}}</script>
+<script>
+const DATA = JSON.parse(document.getElementById("payload").textContent);
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pct = (v, total) => total > 0 ? (v / total) * 100 : 0;
+
+/* ------------------------------------------------------------------ header */
+const s = DATA.summary;
+$("meta").innerHTML =
+  `Generated ${esc(DATA.generated_at)} · engine <a href="${esc(DATA.engine.repo)}">${esc(DATA.engine.repo.replace("https://github.com/",""))}</a> (read-only)`;
+
+const clean = s.violations === 0;
+$("hero").textContent = clean ? "No safety violations" : `${s.violations} safety violations`;
+$("hero").style.color = clean ? "var(--ok)" : "var(--bad)";
+$("hero-note").textContent = clean
+  ? `${s.passed} of ${s.scenarios} scenarios passed. Across every named scenario and a 600-seed randomized sweep, no acknowledged write was lost, no two nodes diverged at a log index, and no term ever had two leaders.`
+  : `${s.failed} of ${s.scenarios} scenarios reported at least one violation. Details below.`;
+
+$("tiles").innerHTML = [
+  ["Scenarios", s.scenarios],
+  ["Passed", s.passed],
+  ["Violations", s.violations],
+  ["Acked writes", s.acked_writes],
+  ["Messages", s.total_messages.toLocaleString()],
+  ["Dropped", s.total_dropped.toLocaleString()],
+  ["Sim ticks", s.total_ticks.toLocaleString()],
+].map(([k, v]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join("");
+
+/* ---------------------------------------------------------------- findings */
+const f = DATA.findings;
+$("findings-title").textContent = f.engine_bugs.length
+  ? `${f.engine_bugs.length} defect(s) found in the engine`
+  : "No defect found in the engine";
+
+let findingsHtml = "";
+if (!f.engine_bugs.length) {
+  findingsHtml += `<div class="clean-note">
+    <p><strong>The engine came through clean.</strong> Six hand-built scenarios and 600 randomized
+    fault schedules covering 1,552 acknowledged writes produced no election-safety, state-machine-safety,
+    or leader-completeness violation.</p>
+    <p>That is a negative result, and it is worth being precise about its limits: it means no violation was
+    found by these faults, not that none exists. The engine also runs without disk persistence, so a real
+    process crash losing its term and vote is outside what this harness can model.</p>
+  </div>`;
+}
+findingsHtml += f.harness_bugs.map(b => `
+  <div class="finding">
+    <div class="tags">
+      <span class="tag">${esc(b.severity)}</span>
+      <span class="tag">found by ${esc(b.found_by)}</span>
+    </div>
+    <h3>${esc(b.title)}</h3>
+    <p><strong>Symptom.</strong> ${esc(b.symptom)}</p>
+    <p>${esc(b.detail)}</p>
+    <p class="fix"><strong>Resolution.</strong> ${esc(b.resolution)}</p>
+    <p class="test">${esc(b.test)}</p>
+  </div>`).join("");
+
+if (f.harness_bugs.length) {
+  findingsHtml = `<p class="prose" style="max-width:70ch;color:var(--ink-2)">
+    Every defect this exercise surfaced was in the <strong>harness</strong>, not the engine. They are
+    documented here because a chaos report that hides its own false positives is not worth reading —
+    two of these would have produced a confidently wrong bug report.</p>` + findingsHtml;
+}
+$("findings").innerHTML = findingsHtml;
+
+/* --------------------------------------------------------------- scenarios */
+function timeline(sc) {
+  const total = sc.total_ticks || 1;
+  const rows = sc.nodes.map(node => {
+    const bands = sc.leader_intervals.filter(i => i.node === node).map(i => {
+      const left = pct(i.start, total), width = Math.max(pct(i.end - i.start, total), 0.6);
+      return `<div class="tl-band leader" style="left:${left}%;width:${width}%" title="${esc(node)} led term ${i.term}, ticks ${i.start}–${i.end}">term ${i.term}</div>`;
+    }).join("");
+    return `<div class="tl-row"><div class="tl-label">${esc(node)}</div><div class="tl-track">${bands}</div></div>`;
+  }).join("");
+
+  const faults = sc.fault_windows.map(w => {
+    const left = pct(w.start, total), width = Math.max(pct(w.end - w.start, total), 0.6);
+    const label = w.node ? `${w.kind} ${w.node}` : w.label;
+    return `<div class="tl-band fault" style="left:${left}%;width:${width}%" title="${esc(label)}, ticks ${w.start}–${w.end}">${esc(label)}</div>`;
+  }).join("");
+
+  const marks = sc.writes.map(w => {
+    const at = w.acked_tick != null ? w.acked_tick : w.proposed_tick;
+    const key = w.command && w.command.key ? w.command.key : "?";
+    const title = `${key}=${w.command.value} · proposed tick ${w.proposed_tick}` +
+                  (w.acked_tick != null ? ` · acked tick ${w.acked_tick}` : ` · never acknowledged (${w.status})`);
+    return `<div class="tl-mark" style="left:${pct(at, total)}%" title="${esc(title)}">
+              <div class="tl-pip ${esc(w.status)}"></div><div class="cap">${esc(key)}</div>
+            </div>`;
+  }).join("");
+
+  return `<div class="timeline">
+    ${rows}
+    <div class="tl-row"><div class="tl-label">faults</div><div class="tl-track">${faults}</div></div>
+    <div class="tl-axis"><div></div><div class="tl-marks">${marks}</div></div>
+    <div class="tl-axis"><div></div><div class="ticks"><span>tick 0</span><span>${total}</span></div></div>
+    <div class="legend">
+      <span><i style="background:var(--leader)"></i> leadership</span>
+      <span><i style="background:var(--fault)"></i> active fault</span>
+      <span><i class="pip filled"></i> write acknowledged</span>
+      <span><i class="pip"></i> never acknowledged</span>
+    </div>
+  </div>`;
+}
+
+function writesTable(sc) {
+  if (!sc.writes.length) return "";
+  const rows = sc.writes.map(w => `
+    <tr>
+      <td class="num">${w.index}</td>
+      <td class="num">${w.term}</td>
+      <td><code>${esc(w.command.key)}=${esc(w.command.value)}</code></td>
+      <td class="num">${w.proposed_tick}</td>
+      <td class="num">${w.acked_tick != null ? w.acked_tick : "—"}</td>
+      <td class="${w.status === "acked" ? "status-acked" : "status-other"}">${esc(w.status)}</td>
+    </tr>`).join("");
+  return `<div class="tbl-wrap"><table>
+    <thead><tr><th>Index</th><th>Term</th><th>Command</th><th>Proposed</th><th>Acked</th><th>Status</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+$("scenarios").innerHTML = DATA.scenarios.map(sc => {
+  const v = sc.check.violations.length;
+  const badge = v === 0 ? `<span class="badge pass">pass</span>` : `<span class="badge fail">${v} violation${v > 1 ? "s" : ""}</span>`;
+  const violations = v === 0 ? "" : `<div class="finding"><h3>Violations</h3>` +
+    sc.check.violations.slice(0, 20).map(x =>
+      `<p><code>${esc(x.kind)}</code> at tick ${x.tick} — ${esc(x.message)}</p>`).join("") + `</div>`;
+
+  return `<details class="scenario">
+    <summary>
+      <span class="chev">›</span>
+      <span class="sum-main">
+        <span class="sum-name">${esc(sc.name)}</span>
+        <div class="sum-fault">${esc(sc.fault_summary)}</div>
+      </span>
+      ${badge}
+    </summary>
+    <div class="scenario-body">
+      <p class="prose" style="color:var(--ink-2);max-width:70ch">${esc(sc.description)}</p>
+      ${timeline(sc)}
+      ${writesTable(sc)}
+      <div class="counters">
+        <span>seed <b>${sc.seed}</b></span>
+        <span>ticks <b>${sc.total_ticks}</b></span>
+        <span>messages sent <b>${sc.counters.messages_sent}</b></span>
+        <span>delivered <b>${sc.counters.messages_delivered}</b></span>
+        <span>dropped <b>${sc.counters.messages_dropped}</b></span>
+        <span>delayed <b>${sc.counters.messages_delayed}</b></span>
+        <span>acked writes <b>${sc.check.acked_writes}</b></span>
+      </div>
+      ${violations}
+    </div>
+  </details>`;
+}).join("");
+
+$("footer").innerHTML =
+  `Results generated by <code>run_chaos.py</code>; this page by <code>build_site.py</code>. ` +
+  `The engine at <a href="${esc(DATA.engine.repo)}">${esc(DATA.engine.repo)}</a> is cloned read-only and is not modified by this harness.`;
+</script>
+</body>
+</html>

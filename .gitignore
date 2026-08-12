@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# The Raft implementation under test is a separate project, cloned here
+# read-only and never modified: github.com/abho7/raft-kv-store
+raft-engine/

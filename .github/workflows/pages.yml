@@ -1,0 +1,60 @@
+name: Run chaos suite and publish report
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The engine is a read-only dependency, cloned fresh rather than
+      # vendored, so the report always reflects its current main.
+      - name: Clone raft-engine (read-only dependency)
+        run: git clone --depth 1 https://github.com/abho7/raft-kv-store.git ./raft-engine
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install --quiet pytest
+
+      # The engine's own suite must be green before its results mean anything.
+      - name: Run the engine's own test suite
+        working-directory: raft-engine
+        run: python -m pytest -q
+
+      - name: Run the harness test suite
+        run: python -m pytest -q
+
+      - name: Run scenarios and build the report
+        run: |
+          python run_chaos.py
+          python build_site.py
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: chaos
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
