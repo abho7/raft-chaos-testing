@@ -1,0 +1,3 @@
+# site/ is emitted by build_site.py from the chaos run's own output. Committed
+# because Pages serves it, but it is not source.
+site/** linguist-generated=true
