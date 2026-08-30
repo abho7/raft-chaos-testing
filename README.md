@@ -1,5 +1,8 @@
 # Raft chaos testing
 
+[![ci](https://github.com/abho7/raft-chaos-testing/actions/workflows/pages.yml/badge.svg)](https://github.com/abho7/raft-chaos-testing/actions/workflows/pages.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Systematic fault injection and continuous correctness verification against
 [abho7/raft-kv-store](https://github.com/abho7/raft-kv-store).
 
